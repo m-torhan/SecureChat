@@ -7,10 +7,11 @@ import debug_tools
 
 debug_tools.set_debug(True)
 
+# packet header 
 class Header(object):
     SIZE = 2
     def __init__(self, content_type, part_type):
-        self.content_type = ContentType
+        self.content_type = content_type
         self.part_type = part_type
 
     def to_bytes(self):
@@ -58,8 +59,8 @@ class MessageType(object):
     RECEIVED = 2
 
 class Message(object):
-    def __init__(self, type, time, text):
-        self.type = type
+    def __init__(self, message_type, time, text):
+        self.type = message_type
         self.time = time
         self.text = text
 
@@ -67,7 +68,7 @@ class Connection(object):
     def __init__(self, sock):
         self.__socket = sock
 
-        self.__chat_history = []
+        self.chat_history = []
 
         self.__send_queue = []
 
@@ -94,10 +95,10 @@ class Connection(object):
     def send_message(self, text):
         self.__send_queue.append(ContentType.MESSAGE, text)
 
-        self.__chat_history.append(Message(MessageType.SENT, datetime.datetime.now(), text))
+        self.chat_history.append(Message(MessageType.SENT, datetime.datetime.now(), text))
 
     def __recv_message(self, text):
-        self.__chat_history.append(Message(MessageType.RECEIVED, datetime.datetime.now(), text))
+        self.chat_history.append(Message(MessageType.RECEIVED, datetime.datetime.now(), text))
     
     def __send_data(self, content_type, data):
         if type(data) != bytes:
@@ -105,11 +106,14 @@ class Connection(object):
         else:
             encoded_data = data[:]
 
+        # calculate packets count
         packet_count = len(encoded_data)//PAYLOAD_SIZE + int((len(encoded_data)%PAYLOAD_SIZE) > 0)
         
+        # create packets
         packets = []
         for i in range(packet_count):
             packet_part_type = 0
+            # specify part type
             if i == 0:
                 packet_part_type |= PartType.FIRST
             if i == packet_count - 1:
@@ -117,14 +121,17 @@ class Connection(object):
             if 0 < i < packet_count - 1:
                 packet_part_type |= PartType.MIDDLE
 
+            # set packet payload
             packet_payload = encoded_data[PAYLOAD_SIZE*i:min(PAYLOAD_SIZE*(i+1), len(encoded_data))]
             debug_tools.print_debug(packet_payload)
+            # fill with zeros
             packet_payload = packet_payload.ljust(PAYLOAD_SIZE, b'\x00')
             debug_tools.print_debug(len(packet_payload))
 
             packets.append(Packet(Header(content_type, packet_part_type), packet_payload))
 
         debug_tools.print_debug(len(packets))
+        # send all packets
         for packet in packets:
             debug_tools.print_debug(f'sending packet {packet} {len(packet.to_bytes())}')
             self.__socket.send(packet.to_bytes())
@@ -135,23 +142,25 @@ class Connection(object):
 
         while True:
             try:
-                p = self.__socket.recv(PACKET_SIZE)
-                debug_tools.print_debug(p.rstrip(b'\x00'))
-                debug_tools.print_debug(len(p))
-                packet = Packet.from_bytes(p)
+                # receive bytes
+                packet_bytes = self.__socket.recv(PACKET_SIZE)
+                debug_tools.print_debug(packet_bytes.rstrip(b'\x00'))
+                debug_tools.print_debug(len(packet_bytes))
+                # parse bytes to packet
+                packet = Packet.from_bytes(packet_bytes)
                 if content_type is None:
                     content_type = packet.header.content_type
                 debug_tools.print_debug(f'received packet {packet}')
                 received_data += packet.payload_str
-                if packet.header.PartType & PartType.LAST:
+                # break if received packet is last
+                if packet.header.part_type & PartType.LAST:
                     break
             except:
                 debug_tools.print_debug('ERROR')
                 print('Connection lost')
                 raise socket.timeout
 
-        return content_type, received_data
-    
+        return content_type, received_data    
 
 PACKET_SIZE = 256
 PAYLOAD_SIZE = PACKET_SIZE - Header.SIZE
