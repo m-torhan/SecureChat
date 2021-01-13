@@ -73,10 +73,7 @@ class SecureChatApp(object):
 
         self.log('App start.')
 
-        host = 'localhost'
-        self.__listener = Listener(host)
-        hostname, port = self.__listener.address
-        self.log(f'Listening on: {hostname}:{port}.')
+        self.__listener = None
         
         _bgcolor = '#d9d9d9'  # X11 color: 'gray85'
         _fgcolor = '#000000'  # X11 color: 'black'
@@ -94,10 +91,11 @@ class SecureChatApp(object):
         self.root = root
 
         def on_destroy():
-            for conn in self.__listener.connections:
-                conn.close()
-            
-            self.__listener.close()
+            if self.__listener is not None:
+                for conn in self.__listener.connections:
+                    conn.close()
+
+                self.__listener.close()
 
             for tab in self.tabs:
                 tab.connection.close()
@@ -159,19 +157,34 @@ class SecureChatApp(object):
         self.new_tab_button.configure(highlightcolor="black")
         self.new_tab_button.configure(pady="0")
         self.new_tab_button.configure(text='''Connect''')
+        self.new_tab_button.configure(state='disabled')
 
         self.new_tab_form = None
+        self.select_hostname_form  = None
         self.change_tab(0)
+        self.create_select_hostname_form()
 
         def loop():
             self.refresh_tab()
-            if self.__listener.connections:
+            
+            if self.__listener is not None and self.__listener.connections:
                 self.open_new_tab(self.__listener.connections.pop())
 
             self.root.after(100, loop)
 
         loop()
     
+    def start_listening(self, hostname):
+        self.select_hostname_form.attributes("-topmost", 0)
+        self.root.attributes("-topmost", 1)
+        self.select_hostname_form.destroy()
+
+        self.__listener = Listener(hostname)
+        hostname, port = self.__listener.address
+        self.log(f'Listening on: {hostname}:{port}.')
+
+        self.new_tab_button.configure(state='normal')
+
     def log(self, text):
         self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), text))
 
@@ -205,6 +218,24 @@ class SecureChatApp(object):
             if not self.chat_scrolled_listbox.get_scroll_pressed():
                 self.chat_scrolled_listbox.see(tk.END)
 
+    def create_select_hostname_form(self):
+        self.select_hostname_form = tk.Toplevel(self.root)
+        self.select_hostname_form.geometry(f"{TAB_WIDTH + 2*PADDING}x{2*TAB_HEIGHT + 3*PADDING}+300+300")
+        self.select_hostname_form.resizable(0,  0)
+        self.select_hostname_form.title('Select hostname')
+        self.root.attributes("-topmost", 0)
+        self.select_hostname_form.attributes("-topmost", 1)
+
+        self.hostname_string_var = tk.StringVar(self.select_hostname_form)
+        self.hostname_string_var.set(socket.gethostbyname_ex(socket.gethostname())[-1][0])
+        self.select_hostname_form_option_menu = tk.OptionMenu(self.select_hostname_form, self.hostname_string_var, *socket.gethostbyname_ex(socket.gethostname())[-1])
+        self.select_hostname_form_option_menu.place(x=PADDING, y=PADDING, width=TAB_WIDTH, height=TAB_HEIGHT)
+
+        self.select_hostname_form_button = tk.Button(self.select_hostname_form)
+        self.select_hostname_form_button.configure(text='Set')
+        self.select_hostname_form_button.configure(command=lambda: self.start_listening(self.hostname_string_var.get()))
+        self.select_hostname_form_button.place(x=PADDING, y=1*TAB_HEIGHT + 1*PADDING, width=TAB_WIDTH, height=TAB_HEIGHT)
+
     def create_new_tab_form(self):
         self.new_tab_button.configure(state='disabled')
 
@@ -212,6 +243,8 @@ class SecureChatApp(object):
         self.new_tab_form.geometry(f"{TAB_WIDTH + 2*PADDING}x{3*TAB_HEIGHT + 4*PADDING}+300+300")
         self.new_tab_form.resizable(0,  0)
         self.new_tab_form.title('New connection')
+        self.root.attributes("-topmost", 0)
+        self.new_tab_form.attributes("-topmost", 1)
 
         def on_destroy():
             self.new_tab_button.configure(state='normal')
