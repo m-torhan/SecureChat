@@ -11,7 +11,6 @@ import tkinter.ttk as ttk
 
 from connection import *
 from debug_tools import *
-from mocks import *
 
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 768
@@ -70,7 +69,14 @@ class SecureChatApp(object):
         self.selected_tab = -1
         self.tab_messages_count = 0
 
-        self.info_log = [Message(MessageFlag.INFO, datetime.datetime.now(), 'App start.')]
+        self.info_log = []
+
+        self.log('App start.')
+
+        host = 'localhost'
+        self.__listener = Listener(host)
+        hostname, port = self.__listener.address
+        self.log(f'Listening on: {hostname}:{port}.')
         
         _bgcolor = '#d9d9d9'  # X11 color: 'gray85'
         _fgcolor = '#000000'  # X11 color: 'black'
@@ -88,6 +94,11 @@ class SecureChatApp(object):
         self.root = root
 
         def on_destroy():
+            for conn in self.__listener.connections:
+                conn.close()
+            
+            self.__listener.close()
+
             for tab in self.tabs:
                 tab.connection.close()
             self.root.destroy()
@@ -147,16 +158,22 @@ class SecureChatApp(object):
         self.new_tab_button.configure(highlightbackground="#d9d9d9")
         self.new_tab_button.configure(highlightcolor="black")
         self.new_tab_button.configure(pady="0")
-        self.new_tab_button.configure(text='''New''')
+        self.new_tab_button.configure(text='''Connect''')
 
         self.new_tab_form = None
         self.change_tab(0)
 
-        def refresh_loop():
+        def loop():
             self.refresh_tab()
-            self.root.after(100, refresh_loop)
+            if self.__listener.connections:
+                self.open_new_tab(self.__listener.connections.pop())
 
-        refresh_loop()
+            self.root.after(100, loop)
+
+        loop()
+    
+    def log(self, text):
+        self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), text))
 
     def change_tab(self, tab):
         if tab is not self.selected_tab:
@@ -173,6 +190,12 @@ class SecureChatApp(object):
             content = self.info_log
         else:
             content = self.selected_tab.content
+
+            if self.selected_tab.connection.closed and not self.selected_tab.connection.close_handled:
+                self.selected_tab.connection.close_handled = True
+                hostname, port = self.selected_tab.connection.remote_address
+                self.log(f'Connection with {hostname}:{port} lost.')
+                self.selected_tab.connection.chat_history.append(Message(MessageFlag.INFO, datetime.datetime.now(), f'Connection lost.'))
 
         if self.tab_messages_count != len(content):
             self.tab_messages_count = len(content)
@@ -215,18 +238,27 @@ class SecureChatApp(object):
 
         self.new_tab_form_button.configure(state='disabled')
         self.new_tab_form_button.configure(text='Connect')
-        self.new_tab_form_button.configure(command=lambda: self.open_new_tab(self.new_tab_form_entry.get()))
+        self.new_tab_form_button.configure(command=lambda: self.open_new_connection(self.new_tab_form_entry.get()))
         self.new_tab_form_button.place(x=PADDING, y=2*TAB_HEIGHT + 3*PADDING, width=TAB_WIDTH, height=TAB_HEIGHT)
 
+    def open_new_connection(self, address):
+        hostname, port = address.split(':')
+        conn = Connection.connect(hostname, int(port))
 
-    def open_new_tab(self, ip_addr):
+        self.open_new_tab(conn, hostname, port)
+
+    def open_new_tab(self, conn, hostname=None, port=None):
         self.new_tab_button.configure(state='normal')
-        self.new_tab_form.destroy()
+        if self.new_tab_form is not None:
+            self.new_tab_form.destroy()
+
+        if hostname is None and port is None:
+            hostname, port = conn.remote_address
 
         tab_button = tk.Button(self.root)
         tab_button_close = tk.Button(self.root)
 
-        tab = Tab(tab_button, tab_button_close, [], ConnectionMock(ip_addr))
+        tab = Tab(tab_button, tab_button_close, [], conn)
 
         tab_button.place(x=PADDING, y=(len(self.tabs) + 1)*(TAB_HEIGHT + PADDING) + PADDING, width=TAB_WIDTH - TAB_HEIGHT, height=TAB_HEIGHT)
         tab_button.configure(activebackground="#ececec")
@@ -237,7 +269,7 @@ class SecureChatApp(object):
         tab_button.configure(highlightbackground="#d9d9d9")
         tab_button.configure(highlightcolor="black")
         tab_button.configure(pady="0")
-        tab_button.configure(text=ip_addr)
+        tab_button.configure(text=f'{hostname}:{port}')
         tab_button.configure(command=lambda: self.change_tab(tab))
         
         tab_button_close.place(x=TAB_WIDTH - TAB_HEIGHT + PADDING, y=(len(self.tabs) + 1)*(TAB_HEIGHT + PADDING) + PADDING, width=TAB_HEIGHT, height=TAB_HEIGHT)
@@ -254,7 +286,7 @@ class SecureChatApp(object):
 
         self.tabs.append(tab)
 
-        self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), f'New connection with {ip_addr}'))
+        self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), f'New connection with {hostname}:{port}'))
 
         self.change_tab(tab)
 
@@ -266,7 +298,8 @@ class SecureChatApp(object):
             self.tabs.remove(tab)
             self.change_tab(0)
 
-            self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), f'Closed connection with {tab.connection.ip_addr}'))
+            hostname, port = tab.connection.remote_address
+            self.log(f'Closed connection with {hostname}:{port}.')
             
             for i, tab in enumerate(self.tabs):
                 tab.button.place(x=PADDING, y=(i + 1)*(TAB_HEIGHT + PADDING) + PADDING, width=TAB_WIDTH - TAB_HEIGHT, height=TAB_HEIGHT)

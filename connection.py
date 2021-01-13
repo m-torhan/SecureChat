@@ -66,12 +66,20 @@ class Message(object):
         self.text = text
 
 class Listener(object):
-    def __init__(self, hostname, port):
-        self.__hostname = hostname
-        self.__port = port
-        print(hostname, port)
+    def __init__(self, hostname, port=None):
         self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.__socket.bind((self.__hostname, self.__port))
+
+        if port is None:
+            port = 10000
+            while True:
+                try:
+                    self.__socket.bind((hostname, port))
+                    break
+                except socket.error:
+                    port += 1
+        else:
+            self.__socket.bind((hostname, port))
+
         self.__socket.listen(1)
 
         self.connections = []
@@ -89,14 +97,26 @@ class Listener(object):
         self.__listener_thread = threading.Thread(target=listener_thread_fun)
         self.__listener_thread.start()
 
+    @property
+    def address(self):
+        return self.__socket.getsockname()
+
     def close(self):
         self.__run = False
         self.__socket.close()
         self.__listener_thread.join()
 
 class Connection(object):
-    def __init__(self, socket):
+    def __init__(self, socket, remote_address=None):
         self.__socket = socket
+
+        if remote_address is None:
+            self.remote_address = self.__socket.getsockname()
+        else:
+            self.remote_address = remote_address
+
+        self.closed = False
+        self.close_handled = False
 
         self.chat_history = []
 
@@ -127,21 +147,25 @@ class Connection(object):
         self.__recv_thread.start()
 
     def send_message(self, text):
-        self.__send_queue.append((ContentType.MESSAGE, text))
-
         self.chat_history.append(Message(MessageFlag.SENT, datetime.datetime.now(), text))
+        if self.closed:
+            self.chat_history.append(Message(MessageFlag.INFO, datetime.datetime.now(), 'Cannot send message. Connection is closed'))
+            return
+
+        self.__send_queue.append((ContentType.MESSAGE, text))
     
     def close(self):
         self.__run = False
         self.__send_thread.join()
         self.__socket.close()
         self.__recv_thread.join()
+        self.closed = True
 
     @classmethod
     def connect(cls, hostname, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((hostname, port))
-        return Connection(sock)
+        return Connection(sock, (hostname, port))
 
     def __recv_message(self, text):
         self.chat_history.append(Message(MessageFlag.RECEIVED, datetime.datetime.now(), text))
@@ -204,6 +228,7 @@ class Connection(object):
             except:
                 debug_tools.print_debug('ERROR')
                 print('Connection lost')
+                self.closed = True
                 raise TimeoutError
 
         return content_type, received_data    
