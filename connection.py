@@ -53,10 +53,11 @@ class Packet(object):
     def __repr__(self):
         return f'Packet({self.header}, {self.payload_str})'
 
-class MessageType(object):
-    INFO = 0
-    SENT = 1
-    RECEIVED = 2
+class MessageFlag(object):
+    INFO =      0x01
+    SENT =      0x02
+    RECEIVED =  0x04
+    DELIVERED = 0x08
 
 class Message(object):
     def __init__(self, message_type, time, text):
@@ -64,28 +65,61 @@ class Message(object):
         self.time = time
         self.text = text
 
+class Listener(object):
+    def __init__(self, hostname, port):
+        self.__hostname = hostname
+        self.__port = port
+        print(hostname, port)
+        self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.__socket.bind((self.__hostname, self.__port))
+        self.__socket.listen(1)
+
+        self.connections = []
+
+        self.__run = True
+
+        def listener_thread_fun():
+            while self.__run:
+                try:
+                    sock, address = self.__socket.accept()
+                    self.connections.append(Connection(sock))
+                except:
+                    break
+
+        self.__listener_thread = threading.Thread(target=listener_thread_fun)
+        self.__listener_thread.start()
+
+    def close(self):
+        self.__run = False
+        self.__socket.close()
+        self.__listener_thread.join()
+
 class Connection(object):
-    def __init__(self, sock):
-        self.__socket = sock
+    def __init__(self, socket):
+        self.__socket = socket
 
         self.chat_history = []
 
         self.__send_queue = []
 
+        self.__run = True
         def send_thread_fun():
-            while True:
+            while self.__run:
                 time.sleep(.1)
                 if len(self.__send_queue) > 0:
                     self.__send_data(*self.__send_queue.pop(0))
         
         def recv_thread_fun():
-            while True:
+            while self.__run:
                 time.sleep(.1)
-                content_type, data = self.__recv_data()
+                try:
+                    content_type, data = self.__recv_data()
+                except TimeoutError:
+                    break
 
                 if content_type == ContentType.MESSAGE:
                     self.__recv_message(data)
-        
+                
         self.__send_thread = threading.Thread(target=send_thread_fun)
         self.__recv_thread = threading.Thread(target=recv_thread_fun)
 
@@ -93,12 +127,24 @@ class Connection(object):
         self.__recv_thread.start()
 
     def send_message(self, text):
-        self.__send_queue.append(ContentType.MESSAGE, text)
+        self.__send_queue.append((ContentType.MESSAGE, text))
 
-        self.chat_history.append(Message(MessageType.SENT, datetime.datetime.now(), text))
+        self.chat_history.append(Message(MessageFlag.SENT, datetime.datetime.now(), text))
+    
+    def close(self):
+        self.__run = False
+        self.__send_thread.join()
+        self.__socket.close()
+        self.__recv_thread.join()
+
+    @classmethod
+    def connect(cls, hostname, port):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((hostname, port))
+        return Connection(sock)
 
     def __recv_message(self, text):
-        self.chat_history.append(Message(MessageType.RECEIVED, datetime.datetime.now(), text))
+        self.chat_history.append(Message(MessageFlag.RECEIVED, datetime.datetime.now(), text))
     
     def __send_data(self, content_type, data):
         if type(data) != bytes:
@@ -158,7 +204,7 @@ class Connection(object):
             except:
                 debug_tools.print_debug('ERROR')
                 print('Connection lost')
-                raise socket.timeout
+                raise TimeoutError
 
         return content_type, received_data    
 
