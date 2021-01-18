@@ -4,6 +4,7 @@ import time
 import datetime
 
 import debug_tools
+from double_ratchet import *
 
 debug_tools.set_debug(True)
 
@@ -26,7 +27,9 @@ class Header(object):
         return f'Header({self.content_type}, {self.part_type})'
 
 class ContentType(object):
-    MESSAGE =   0x01
+    MESSAGE =               0x01
+    DOUBLE_RATCHET_PACKET = 0x02
+    PUBLIC_KEY =            0x04
 
 class PartType(object):
     FIRST =     0x01
@@ -51,7 +54,8 @@ class Packet(object):
         return Packet(Header.from_bytes(byte_array[:2]), byte_array[2:].ljust(PAYLOAD_SIZE, b'\x00'))
                       
     def __repr__(self):
-        return f'Packet({self.header}, {self.payload_str})'
+        p = self.payload.rstrip(b'\x00')
+        return f'Packet({self.header}, {p})'
 
 class MessageFlag(object):
     INFO =      0x01
@@ -90,7 +94,9 @@ class Listener(object):
             while self.__run:
                 try:
                     sock, address = self.__socket.accept()
-                    self.connections.append(Connection(sock))
+                    debug_tools.print_debug('Appending connection', address)
+                    self.connections.append(Connection(sock, local_address=address))
+                    debug_tools.print_debug('Appended connection', address)
                 except:
                     break
 
@@ -107,12 +113,18 @@ class Listener(object):
         self.__listener_thread.join()
 
 class Connection(object):
-    def __init__(self, socket, remote_address=None):
+    def __init__(self, socket, local_address=None, remote_address=None):
         self.__socket = socket
 
+        debug_tools.print_debug('Connection init', local_address, remote_address)
+
+        self.__initiator = remote_address is not None
+
         if remote_address is None:
+            self.local_address = local_address
             self.remote_address = self.__socket.getsockname()
         else:
+            self.local_address = self.__socket.getsockname()
             self.remote_address = remote_address
 
         self.closed = False
@@ -138,21 +150,47 @@ class Connection(object):
                     break
 
                 if content_type == ContentType.MESSAGE:
-                    self.__recv_message(data)
+                    self.__recv_message(data, decrypt=False)
+                elif content_type == ContentType.DOUBLE_RATCHET_PACKET:
+                    self.__recv_message(data, decrypt=True)
+                elif content_type == ContentType.PUBLIC_KEY:
+                    received_public_key = data[:32]
+                    debug_tools.print_debug(type(received_public_key), len(received_public_key))
+                    sk = self.__key_pair.get_agreement(received_public_key)
+                    if self.__dr_state is None:
+                        if self.__initiator:
+                            debug_tools.print_debug('creating initiator state ...', self.local_address)
+                            self.__dr_state = self.__dr.create_initiator_state(sk, self.__key_pair.public_key)
+                            debug_tools.print_debug('initiator state created', self.local_address)
+                        else:
+                            debug_tools.print_debug('creating receiver state ...', self.local_address)
+                            self.__dr_state = self.__dr.create_receiver_state(self.__key_pair, sk)
+                            debug_tools.print_debug('receiver state created', self.local_address)
                 
         self.__send_thread = threading.Thread(target=send_thread_fun)
         self.__recv_thread = threading.Thread(target=recv_thread_fun)
 
+        self.__key_pair = DoubleRatchetKeyPairGenerator.generate_key_pair()
+        self.__dr = DoubleRatchet()
+        self.__dr_state = None
+
+        self.__send_queue.append((ContentType.PUBLIC_KEY, self.__key_pair.public_key))
+
         self.__send_thread.start()
         self.__recv_thread.start()
 
-    def send_message(self, text):
+    def send_message(self, text, encrypt=True):
         self.chat_history.append(Message(MessageFlag.SENT, datetime.datetime.now(), text))
         if self.closed:
             self.chat_history.append(Message(MessageFlag.INFO, datetime.datetime.now(), 'Cannot send message. Connection is closed'))
             return
-
-        self.__send_queue.append((ContentType.MESSAGE, text))
+        if encrypt:
+            if self.__dr_state is not None:
+                self.__send_queue.append((ContentType.DOUBLE_RATCHET_PACKET, self.__dr.ratchet_encrypt(self.__dr_state, text, self.remote_address)))
+            else:
+                self.chat_history.append(Message(MessageFlag.INFO, datetime.datetime.now(), 'Cannot send message. Encryption error'))
+        else:
+            self.__send_queue.append((ContentType.MESSAGE, text))
     
     def close(self):
         self.__run = False
@@ -165,14 +203,24 @@ class Connection(object):
     def connect(cls, hostname, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((hostname, port))
-        return Connection(sock, (hostname, port))
+        return Connection(sock, remote_address=(hostname, port))
 
-    def __recv_message(self, text):
+    def __recv_message(self, text, decrypt=True):
+        if decrypt:
+            text = self.__dr.ratchet_decrypt(self.__dr_state, DoubleRatchetPacket.from_bytes(text.rstrip(b'\x00')), self.local_address[0].encode())
+            print_debug(type(text), text)
+            text = text.decode('utf-8')
+            
         self.chat_history.append(Message(MessageFlag.RECEIVED, datetime.datetime.now(), text))
     
     def __send_data(self, content_type, data):
-        if type(data) != bytes:
-            encoded_data = data.encode('utf-8')
+        if content_type == ContentType.MESSAGE:
+            if type(data) != bytes:
+                encoded_data = data.encode('utf-8')
+            else:
+                encoded_data = data[:]
+        elif content_type == ContentType.DOUBLE_RATCHET_PACKET:
+            encoded_data = data.to_bytes()
         else:
             encoded_data = data[:]
 
@@ -221,7 +269,12 @@ class Connection(object):
                 if content_type is None:
                     content_type = packet.header.content_type
                 debug_tools.print_debug(f'received packet {packet}')
-                received_data += packet.payload_str
+                if content_type == ContentType.MESSAGE:
+                    received_data += packet.payload_str
+                else:
+                    if received_data == '':
+                        received_data = b''
+                    received_data += packet.payload
                 # break if received packet is last
                 if packet.header.part_type & PartType.LAST:
                     break

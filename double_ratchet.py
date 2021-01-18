@@ -25,8 +25,11 @@ class DoubleRatchetHeader(object):
         self.n =  n
     
     def to_bytes(self):
-        return bytes(self.dh) + bytes(self.pn) + bytes(self.n)
-
+        return self.dh + int.to_bytes(self.pn, 4, byteorder='big') + int.to_bytes(self.n, 4, byteorder='big')
+    
+    @staticmethod
+    def from_bytes(byte_array):
+        return DoubleRatchetHeader(byte_array[:-8], int.from_bytes(byte_array[-8:-4], byteorder='big'), int.from_bytes(byte_array[-4:], byteorder='big'))
 class DoubleRatchetPacket(object):
     def __init__(self, header:  DoubleRatchetHeader, payload: bytes):
         self.__header = header
@@ -39,6 +42,14 @@ class DoubleRatchetPacket(object):
     @property
     def payload(self):
         return self.__payload
+    
+    def to_bytes(self):
+        return self.__header.to_bytes() + self.__payload
+    
+    @staticmethod
+    def from_bytes(byte_array):
+        print_debug('bytes to packet', type(byte_array), byte_array)
+        return DoubleRatchetPacket(DoubleRatchetHeader.from_bytes(byte_array[:40]), byte_array[40:])
 
 class DoubleRatchetKeyPair(object):
     def __init__(self, public_key: bytes, private_key: bytes):
@@ -85,7 +96,8 @@ class DoubleRatchet(object):
         mk = kdf[1]
         header = DoubleRatchetHeader(state.dhs.public_key, state.pn, state.ns)
         state.ns +=  1
-        packet = DoubleRatchetPacket(header, DoubleRatchet.__encrypt(mk, plaintext.encode(), ad + header.to_bytes()))
+        print_debug(ad, type(ad), header.to_bytes(), type(header.to_bytes()))
+        packet = DoubleRatchetPacket(header, DoubleRatchet.__encrypt(mk, plaintext.encode(), bytes(0)))
         return packet
     
     @staticmethod
@@ -117,7 +129,9 @@ class DoubleRatchet(object):
 
     @staticmethod
     def __skip_message_keys(state: DoubleRatchetState, until: int):
+        print_debug('skip', until, state.nr)
         if state.nr + DoubleRatchet.MAX_SKIP < until:
+            print_debug('skip', until, state.nr, DoubleRatchet.MAX_SKIP)
             raise Exception('MAX_SKIP exceeded')
         
         if state.ckr is not None:
@@ -163,7 +177,7 @@ class DoubleRatchet(object):
         
     @staticmethod
     def __decrypt(mk: bytes, ciphertext: bytes, ad: bytes) -> bytes:
-        block_cipher = AES.new(mk, AES.MODE_GCM, nonce=DoubleRatchet.fixed_nonce, mac_len=DoubleRatchet.mac_size)
+        block_cipher = AES.new(mk, mode=AES.MODE_GCM, nonce=DoubleRatchet.fixed_nonce, mac_len=DoubleRatchet.mac_size)
         return block_cipher.decrypt(ciphertext)
 
     @staticmethod
