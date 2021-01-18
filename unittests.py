@@ -18,13 +18,14 @@ class ConnectionTest(unittest.TestCase):
         
         connection_2 = Connection.connect(hostname, port)
 
-        sleep(.1)
+        sleep(.5)
         
         self.assertEqual(len(listener.connections), 2)
 
         connection_1.close()
-        connection_2.close()
         listener.connections[0].close()
+        connection_2.close()
+        listener.connections[1].close()
         listener.close()
     
     def test_send_message(self):
@@ -32,6 +33,8 @@ class ConnectionTest(unittest.TestCase):
 
         listener = Listener(hostname, port)
         connection_1 = Connection.connect(hostname, port)
+
+        sleep(.5)
 
         connection_1.send_message('test message')
 
@@ -58,23 +61,23 @@ class DoubleRatchetTest(unittest.TestCase):
         sk_alice = key_pair_alice.get_agreement(key_pair_bob.public_key)
 
         bob = User(
-            "Bob",
+            'Bob',
             dr.create_receiver_state(key_pair_bob, sk_bob),
             dr)
         
         alice = User(
-            "Alice",
+            'Alice',
             dr.create_initiator_state(sk_alice, key_pair_bob.public_key),
             dr)
         
-        alice.send_message(bob, "test")
-        self.assertEqual(bob.log[0], "test")
+        alice.send_message(bob, 'test')
+        self.assertEqual(bob.log[0], 'test')
 
-        alice.send_message(bob, "test2")
-        self.assertEqual(bob.log[1], "test2")
+        alice.send_message(bob, 'test2')
+        self.assertEqual(bob.log[1], 'test2')
 
-        bob.send_message(alice, "test3")
-        self.assertEqual(alice.log[0], "test3")
+        bob.send_message(alice, 'test3')
+        self.assertEqual(alice.log[0], 'test3')
 
 
 if __name__ == '__main__':
