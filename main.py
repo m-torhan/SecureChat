@@ -1,5 +1,6 @@
-#! /usr/bin/env python
-#  -*- coding: utf-8 -*-
+#  -*- coding: utf-8 -*-\
+
+from __future__ import annotations
 
 import sys
 import datetime
@@ -9,29 +10,38 @@ import tkinter as tk
 import tkinter.ttk as ttk
 
 from connection import *
-from debug_tools import *
 
-WINDOW_WIDTH = 1024
-WINDOW_HEIGHT = 768
+# main window parameters
+WINDOW_WIDTH = 768
+WINDOW_HEIGHT = 512
 TAB_WIDTH = 256
 TAB_HEIGHT = 24
 PADDING = 8
 MAX_TABS = 16
-LINE_MAX_CHARS = 64
+LINE_MAX_CHARS = 36
 
+# regular expression used to validate ip address
 IP_PORT_REGEX = r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]):[0-9]+$'
 
 def destroy_SecureChatTopLevel():
+    '''
+    Closes main window.
+    '''
     global w
     w.destroy()
     w = None
 
-def messages_to_listbox(messages, listbox):
+def messages_to_listbox(messages: list(Messsage), listbox: tk.Listbox):
+    '''
+    Appends messages to listbox.
+    '''
     for message in messages:
         prefix =  ''
         if type(message.time) == datetime.datetime:
+            # converts datetime to string
             prefix += message.time.strftime('[%y-%m-%d %H:%M:%S] ')
 
+        # add message type indicator
         if message.type == MessageFlag.INFO:
             prefix += '- '
         if message.type == MessageFlag.RECEIVED:
@@ -39,6 +49,7 @@ def messages_to_listbox(messages, listbox):
         if message.type == MessageFlag.SENT:
             prefix += '> '
 
+        # split message if needed and add to list box
         for i in range((len(message.text) + LINE_MAX_CHARS - 1)//LINE_MAX_CHARS):
             if i == 0:
                 listbox.insert(tk.END, prefix + message.text[i*LINE_MAX_CHARS:min((i + 1)*LINE_MAX_CHARS, len(message.text))])
@@ -46,24 +57,38 @@ def messages_to_listbox(messages, listbox):
                 listbox.insert(tk.END, ' '*len(prefix) + message.text[i*LINE_MAX_CHARS:min((i + 1)*LINE_MAX_CHARS, len(message.text))])
 
 class Tab(object):
-    def __init__(self, button, button_close, content=[], connection=None):
+    '''
+    Represents connection tab.
+    '''
+    def __init__(self, button: tk.Button, button_close: tk.Button, content: list(Message) =[], connection: Connection =None):
+        '''
+        Tab constructor.
+        '''
+        # add tab switch button
         self.button = button
         self.button.pack()
 
+        # add tab close button
         self.button_close = button_close
         if self.button_close  is not None:
             self.button_close.pack()
 
+        # link connection chat_history with tab content
         self.connection = connection
         self.content = content
         if self.connection is not None:
             self.content = connection.chat_history
 
 class SecureChatApp(object):
+    '''
+    Main application window. This class configures and populates the toplevel window.
+    '''
     def __init__(self, root=None):
-        '''This class configures and populates the toplevel window.
-           top is the toplevel containing window.'''
+        '''
+        SecureChatApp constructor
+        '''
 
+        # conneciton tabs
         self.tabs = []
         self.selected_tab = -1
         self.tab_messages_count = 0
@@ -90,6 +115,10 @@ class SecureChatApp(object):
         self.root = root
 
         def on_destroy():
+            '''
+            Handles window close.
+            '''
+            # close listener and all connections
             if self.__listener is not None:
                 for conn in self.__listener.connections:
                     conn.close()
@@ -100,13 +129,16 @@ class SecureChatApp(object):
                 tab.connection.close()
             self.root.destroy()
 
+        # bind close handling function to close event
         self.root.protocol("WM_DELETE_WINDOW", on_destroy)
 
+        # set window geometry
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+256+256")
         self.root.resizable(0,  0)
         self.root.title("SecureChat")
         self.root.configure(background="#d9d9d9")
 
+        # populate all elements
         self.chat_scrolled_listbox = ScrolledListBox(self.root)
         self.chat_scrolled_listbox.place(x=TAB_WIDTH + 2*PADDING, y=PADDING, width=WINDOW_WIDTH - TAB_WIDTH - 3*PADDING, height=WINDOW_HEIGHT - TAB_HEIGHT - 3*PADDING)
         self.chat_scrolled_listbox.configure(background="white")
@@ -128,8 +160,13 @@ class SecureChatApp(object):
         self.chat_entry.configure(insertbackground="black")
 
         def on_chat_entry_finished(event=None):
+            '''
+            Called when user press enter after typing message.
+            '''
             self.send_message(self.chat_entry.get())
             self.chat_entry.delete(0, 'end')
+        
+        # bind function to event
         self.chat_entry.bind('<Return>', on_chat_entry_finished)
 
         self.info_tab_button = tk.Button(self.root)
@@ -164,6 +201,9 @@ class SecureChatApp(object):
         self.create_select_hostname_form()
 
         def loop():
+            '''
+            Loop that is executed every 100 ms.
+            '''
             self.refresh_tab()
             
             if self.__listener is not None and self.__listener.connections:
@@ -173,7 +213,10 @@ class SecureChatApp(object):
 
         loop()
     
-    def start_listening(self, hostname):
+    def start_listening(self, hostname: str):
+        '''
+        Starts listener.
+        '''
         self.select_hostname_form.attributes("-topmost", 0)
         self.root.attributes("-topmost", 1)
         self.select_hostname_form.destroy()
@@ -184,10 +227,16 @@ class SecureChatApp(object):
 
         self.new_tab_button.configure(state='normal')
 
-    def log(self, text):
+    def log(self, text: str):
+        '''
+        Logs app informations.
+        '''
         self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), text))
 
-    def change_tab(self, tab):
+    def change_tab(self, tab: Tab):
+        '''
+        Changes connection tab.
+        '''
         if tab is not self.selected_tab:
             self.selected_tab = tab
             if tab == 0:
@@ -198,6 +247,9 @@ class SecureChatApp(object):
                 messages_to_listbox(tab.content, self.chat_scrolled_listbox)
     
     def refresh_tab(self):
+        '''
+        Refreshes current tab.
+        '''
         if self.selected_tab == 0:
             content = self.info_log
         else:
@@ -218,6 +270,10 @@ class SecureChatApp(object):
                 self.chat_scrolled_listbox.see(tk.END)
 
     def create_select_hostname_form(self):
+        '''
+        Opens form with dropdown menu with available hostnames.
+        '''
+        # place form elements
         self.select_hostname_form = tk.Toplevel(self.root)
         self.select_hostname_form.geometry(f"{TAB_WIDTH + 2*PADDING}x{2*TAB_HEIGHT + 3*PADDING}+300+300")
         self.select_hostname_form.resizable(0,  0)
@@ -236,8 +292,12 @@ class SecureChatApp(object):
         self.select_hostname_form_button.place(x=PADDING, y=1*TAB_HEIGHT + 1*PADDING, width=TAB_WIDTH, height=TAB_HEIGHT)
 
     def create_new_tab_form(self):
+        '''
+        Opens form that can be used to connect with another user.
+        '''
         self.new_tab_button.configure(state='disabled')
 
+        # place form elements
         self.new_tab_form = tk.Toplevel(self.root)
         self.new_tab_form.geometry(f"{TAB_WIDTH + 2*PADDING}x{3*TAB_HEIGHT + 4*PADDING}+300+300")
         self.new_tab_form.resizable(0,  0)
@@ -246,8 +306,12 @@ class SecureChatApp(object):
         self.new_tab_form.attributes("-topmost", 1)
 
         def on_destroy():
+            '''
+            Function called after form is closed
+            '''
             self.new_tab_button.configure(state='normal')
             self.new_tab_form.destroy()
+        # bind function to close event
         self.new_tab_form.protocol("WM_DELETE_WINDOW", on_destroy)
 
         self.new_tab_form_label = tk.Label(self.new_tab_form)
@@ -258,7 +322,10 @@ class SecureChatApp(object):
         self.new_tab_form_button = tk.Button(self.new_tab_form)
 
         def validate_entry(sv):
-            if re.match(IP_PORT_REGEX, sv.get()) is not None:
+            '''
+            Validate if user input is a valid ip adress and different from local address
+            '''
+            if re.match(IP_PORT_REGEX, sv.get()) is not None and sv.get() != f'{self.__listener.address[0]}:{self.__listener.address[1]}':
                 self.new_tab_form_button.configure(state='normal')
             else:
                 self.new_tab_form_button.configure(state='disabled')
@@ -273,13 +340,19 @@ class SecureChatApp(object):
         self.new_tab_form_button.configure(command=lambda: self.open_new_connection(self.new_tab_form_entry.get()))
         self.new_tab_form_button.place(x=PADDING, y=2*TAB_HEIGHT + 3*PADDING, width=TAB_WIDTH, height=TAB_HEIGHT)
 
-    def open_new_connection(self, address):
+    def open_new_connection(self, address: tuple(str, int)):
+        '''
+        Opens new connection and calls new tab method.
+        '''
         hostname, port = address.split(':')
         conn = Connection.connect(hostname, int(port))
 
         self.open_new_tab(conn, hostname, port)
 
-    def open_new_tab(self, conn, hostname=None, port=None):
+    def open_new_tab(self, conn: Connection, hostname: str =None, port: int =None):
+        '''
+        Opens new tab.
+        '''
         self.new_tab_button.configure(state='normal')
         if self.new_tab_form is not None:
             self.new_tab_form.destroy()
@@ -292,6 +365,7 @@ class SecureChatApp(object):
 
         tab = Tab(tab_button, tab_button_close, [], conn)
 
+        # place tab elements
         tab_button.place(x=PADDING, y=(len(self.tabs) + 1)*(TAB_HEIGHT + PADDING) + PADDING, width=TAB_WIDTH - TAB_HEIGHT, height=TAB_HEIGHT)
         tab_button.configure(activebackground="#ececec")
         tab_button.configure(activeforeground="#000000")
@@ -318,11 +392,16 @@ class SecureChatApp(object):
 
         self.tabs.append(tab)
 
+        # log info about new connection
         self.info_log.append(Message(MessageFlag.INFO, datetime.datetime.now(), f'New connection with {hostname}:{port}'))
 
+        # switch to new tab
         self.change_tab(tab)
 
-    def close_tab(self, tab):
+    def close_tab(self, tab: Tab):
+        '''
+        Closes tab and related connection.
+        '''
         if isinstance(tab, Tab):
             tab.button.destroy()
             tab.button_close.destroy()
@@ -338,22 +417,30 @@ class SecureChatApp(object):
                 tab.button_close.place(x=TAB_WIDTH - TAB_HEIGHT + PADDING, y=(i + 1)*(TAB_HEIGHT + PADDING) + PADDING, width=TAB_HEIGHT, height=TAB_HEIGHT)
     
     def check_max_tab_exceed(self):
+        '''
+        Checks if number of tab is not too big.
+        '''
         if len(self.tabs) >= MAX_TABS:
             self.new_tab_button.configure(state='disabled')
         else:
             self.new_tab_button.configure(state='normal')
 
-    def send_message(self, text):
+    def send_message(self, text: str):
+        '''
+        Sends message using current  tab.
+        '''
         if isinstance(self.selected_tab, Tab):
             self.selected_tab.connection.send_message(text)
 
 # The following code is added to facilitate the Scrolled widgets you specified.
 class AutoScroll(object):
-    '''Configure the scrollbars for a widget.'''
+    '''
+    Configure the scrollbars for a widget.
+    '''
     def __init__(self, master):
-        #  Rozen. Added the try-except clauses so that this class
-        #  could be used for scrolled entry widget for which vertical
-        #  scrolling is not supported. 5/7/14.
+        '''
+        AutoScroll constructor.
+        '''
         try:
             self.vsb = ttk.Scrollbar(master, orient='vertical', command=self.yview)
         except:
@@ -372,7 +459,7 @@ class AutoScroll(object):
         self.hsb.grid(column=0, row=1, sticky='ew')
         master.grid_columnconfigure(0, weight=1)
         master.grid_rowconfigure(0, weight=1)
-        # Copy geometry methods of master  (taken from ScrolledText.py)
+        # copy geometry methods of master  (taken from ScrolledText.py)
         methods = tk.Pack.__dict__.keys() | tk.Grid.__dict__.keys() | tk.Place.__dict__.keys()
         for meth in methods:
             if meth[0] != '_' and meth not in ('config', 'configure'):
@@ -385,14 +472,22 @@ class AutoScroll(object):
         self.vsb.bind("<ButtonRelease-1>", lambda e: self.set_scroll_pressed(False))
 
     def get_scroll_pressed(self):
+        '''
+        Checks if scroll bar is pressed
+        '''
         return self.scroll_pressed
 
     def set_scroll_pressed(self, value):
+        '''
+        Sets stroll pressed value.
+        '''
         self.scroll_pressed =  value
 
     @staticmethod
     def _autoscroll(sbar):
-        '''Hide and show scrollbar as needed.'''
+        '''
+        Hide and show scrollbar as needed.
+        '''
         def wrapped(first, last):
             first, last = float(first), float(last)
             if first <= 0 and last >= 1:
@@ -406,8 +501,9 @@ class AutoScroll(object):
         return str(self.master)
 
 def _create_container(func):
-    '''Creates a ttk Frame with a given master, and use this new frame to
-    place the scrollbars and the widget.'''
+    '''
+    Creates a ttk Frame with a given master, and use this new frame to place the scrollbars and the widget.
+    '''
     def wrapped(cls, master, **kw):
         container = ttk.Frame(master)
         container.bind('<Enter>', lambda e: _bound_to_mousewheel(e, container))
@@ -416,16 +512,25 @@ def _create_container(func):
     return wrapped
 
 class ScrolledListBox(AutoScroll, tk.Listbox):
-    '''A standard Tkinter Listbox widget with scrollbars that will
-    automatically show/hide as needed.'''
+    '''
+    A standard Tkinter Listbox widget with scrollbars that will automatically show/hide as needed.
+    '''
     @_create_container
     def __init__(self, master, **kw):
+        '''
+        ScrolledListBox constructor.
+        '''
         tk.Listbox.__init__(self, master, **kw)
         AutoScroll.__init__(self, master)
+
     def size_(self):
+        '''
+        Returns scrolled list box size.
+        '''
         sz = tk.Listbox.size(self)
         return sz
 
+# tkinter events
 import platform
 def _bound_to_mousewheel(event, widget):
     child = widget.winfo_children()[0]
@@ -471,6 +576,7 @@ def _on_shiftmouse(event, widget):
             widget.xview_scroll(1, 'units')
 
 if __name__ == '__main__':
+    # start the app
     root = tk.Tk()
     top = SecureChatApp(root)
     root.mainloop()
